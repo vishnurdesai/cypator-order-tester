@@ -1,0 +1,130 @@
+{
+  "_comment": "Copy to rippleuat.local.json (git-ignored) and adjust. Secrets come from environment variables via ${env:NAME}. Message formats follow the WS Taker API docs (docs.liquidity.ripple.com).",
+  "environment": "rippleuat",
+
+  "run": {
+    "maxOrders": 10,
+    "repeat": 1,
+    "delayBetweenOrdersMs": 500,
+    "orderTimeoutMs": 10000,
+    "sides": ["BUY", "SELL"],
+    "reportDir": "reports",
+    "clOrdIdPrefix": "OT",
+    "stopOnFailure": false,
+    "_priceMode_comment": "config = instruments[].limitPrice; book = from the live market-data book at send time (IOC/FOK cross by aggressiveBps, GTC rests passiveBps away). Pre-exec orders never use limitPrice: instruments[].preExecPrice if set, else the live touch +/- preExecBps, refused if further than preExecMaxDeviationBps from the touch.",
+    "priceMode": "config",
+    "aggressiveBps": 20,
+    "passiveBps": 100,
+    "preExecBps": 0,
+    "preExecMaxDeviationBps": 500,
+    "_sendPriceOnMarket_comment": "the API marks price as required: MARKET orders carry the touch (else limitPrice)",
+    "sendPriceOnMarket": true
+  },
+
+  "instruments": [
+    {
+      "_comment": "Fixed prices: must be marketable for FOK/IOC to fill (BUY above the ask, SELL below the bid).",
+      "symbol": "XRP/USD",
+      "instrumentId": 88,
+      "sizes": [10, 250],
+      "limitPrice": { "BUY": 3.50, "SELL": 1.50 }
+    },
+    {
+      "_comment": "Prices taken from the live book.",
+      "symbol": "USDC/USD",
+      "instrumentId": 76,
+      "sizes": [100, 1000],
+      "priceMode": "book"
+    },
+    {
+      "symbol": "RLUSD/USD",
+      "instrumentId": 68,
+      "sizes": [100],
+      "priceMode": "book",
+      "orderTypes": ["MARKET_IOC", "LIMIT_FOK"]
+    }
+  ],
+
+  "_orderTypes_comment": "Available: MARKET_IOC, MARKET_FOK, LIMIT_IOC, LIMIT_FOK, LIMIT_GTC (wire tif GOOD_TILL_CANCEL), LIMIT_GTD. The trade session documents IOC/FOK; GTC only where the acceptor enables it.",
+  "orderTypes": ["MARKET_IOC", "MARKET_FOK", "LIMIT_IOC", "LIMIT_FOK"],
+  "_preExec_comment": "These types are ALSO sent as pre-execution orders (\"preExec\": true). Pre-exec orders execute at the price sent - keep it near market.",
+  "preExecOrderTypes": ["LIMIT_FOK"],
+
+  "_orderVars_comment": "Optional order fields from the API docs; null drops the field.",
+  "orderVars": { "account": null, "baseChain": null, "termChain": null },
+
+  "_expect_comment": "Statuses that count as PASS per scenario: <TYPE>, <TYPE>+PREEXEC, PREEXEC, or default. Without an entry: FILLED, PARTIAL_FILL, CANCELED, RESTING, EXPIRED.",
+  "expect": {
+    "LIMIT_FOK": ["FILLED"],
+    "MARKET_FOK": ["FILLED"],
+    "PREEXEC": ["FILLED"]
+  },
+
+  "ws": {
+    "_comment": "server = the API server identifier (e.g. TRIPPLEWSAPIUAT1; the wsapiN number does not map to it). Each session logs on with its own client id.",
+    "server": "${env:OT_WS_SERVER}",
+    "apiKey": "${env:OT_WS_API_KEY}",
+    "secret": "${env:OT_WS_SECRET}",
+    "signPath": "/verify",
+    "timestampUnit": "ms",
+    "logonTimeoutMs": 10000,
+    "pingIntervalMs": 20000,
+    "reconnect": true,
+    "logonTemplate": {
+      "op": "logon",
+      "arg": { "apiKey": "${apiKey}", "sign": "${sign}", "server": "${server}", "client": "${client}" },
+      "ts": "${timestamp}"
+    },
+    "pingTemplate": { "op": "ping" },
+
+    "market": {
+      "url": "wss://wsapi14.rippleuat.cypator.net:12007/market",
+      "client": "${env:OT_WS_MARKET_CLIENT}",
+      "subscribeTemplate": {
+        "op": "subscribe",
+        "arg": {
+          "instrument": "${instrument}", "side": "BOTH", "subscriptionId": "${subscriptionId}", "quantity": 0,
+          "subscriptionRequestType": "snapshot", "typeBook": "SPOT", "aggBook": 0, "marketDepth": 0
+        },
+        "ts": "${nowMs}"
+      },
+      "unsubscribeTemplate": {
+        "op": "unsubscribe",
+        "arg": { "subscriptionId": "${subscriptionId}", "instrument": "${instrument}", "typeBook": "SPOT" },
+        "ts": "${nowMs}"
+      },
+      "waitForBookMs": 10000,
+      "requireBook": true,
+      "_maxBookAgeMs_comment": "0 = off. rippleuat force-snapshots every 10 s (60 s on lcawsrippleb), so use >= 30000 if you enable it.",
+      "maxBookAgeMs": 0
+    },
+
+    "trade": {
+      "url": "wss://wsapi14.rippleuat.cypator.net:12007/trade",
+      "client": "${env:OT_WS_TRADE_CLIENT}",
+      "orderTemplate": {
+        "op": "order",
+        "arg": {
+          "instrument": "${instrument}",
+          "side": "${side}",
+          "clOrderId": "${clOrdId}",
+          "orderType": "${orderType}",
+          "tif": "${tif}",
+          "account": "${account}",
+          "quantity": "${quantity}",
+          "price": "${price}",
+          "preExec": "${preExec}",
+          "baseChain": "${baseChain}",
+          "termChain": "${termChain}"
+        },
+        "ts": "${nowMs}"
+      },
+      "cancelTemplate": {
+        "op": "cancel_order",
+        "arg": { "clOrderId": "${origClOrdId}", "instrument": "${instrument}" },
+        "ts": "${nowMs}"
+      },
+      "cancelRestingOrders": true
+    }
+  }
+}

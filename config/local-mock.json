@@ -1,0 +1,41 @@
+{
+  "_comment": "Runs against the bundled mock: java -cp target/cypator-order-tester.jar com.cypator.ordertester.mock.MockWsServer",
+  "environment": "local",
+  "run": { "maxOrders": 0, "delayBetweenOrdersMs": 50, "orderTimeoutMs": 3000, "sides": ["BUY", "SELL"] },
+  "instruments": [
+    { "symbol": "XRP/USD", "instrumentId": 88, "sizes": [10], "limitPrice": { "BUY": 3.5, "SELL": 1.5 } },
+    { "symbol": "USDC/USD", "instrumentId": 76, "sizes": [1000], "priceMode": "book" },
+    { "symbol": "BAD/SYM", "sizes": [1], "limitPrice": { "BUY": 1, "SELL": 1 }, "orderTypes": ["LIMIT_FOK"], "preExecOrderTypes": [] }
+  ],
+  "orderTypes": ["MARKET_IOC", "MARKET_FOK", "LIMIT_IOC", "LIMIT_FOK", "LIMIT_GTC"],
+  "preExecOrderTypes": ["LIMIT_FOK"],
+  "orderVars": { "account": null },
+  "expect": { "LIMIT_FOK": ["FILLED"], "PREEXEC": ["FILLED"] },
+  "ws": {
+    "server": "MOCKSRV",
+    "apiKey": "key123",
+    "secret": "sekret",
+    "pingIntervalMs": 5000,
+    "logonTemplate": { "op": "logon", "arg": { "apiKey": "${apiKey}", "sign": "${sign}", "server": "${server}", "client": "${client}" },
+                       "ts": "${timestamp}" },
+    "pingTemplate": { "op": "ping" },
+    "market": {
+      "url": "ws://localhost:19877/market",
+      "client": "MOCKMD",
+      "waitForBookMs": 2000,
+      "subscribeTemplate": { "op": "subscribe", "arg": { "instrument": "${instrument}", "side": "BOTH", "subscriptionId": "${subscriptionId}",
+                             "quantity": 0, "subscriptionRequestType": "snapshot", "typeBook": "SPOT", "aggBook": 0, "marketDepth": 0 },
+                             "ts": "${nowMs}" },
+      "unsubscribeTemplate": { "op": "unsubscribe", "arg": { "subscriptionId": "${subscriptionId}", "instrument": "${instrument}",
+                               "typeBook": "SPOT" }, "ts": "${nowMs}" }
+    },
+    "trade": {
+      "url": "ws://localhost:19877/trade",
+      "client": "MOCKTR",
+      "orderTemplate": { "op": "order", "arg": { "instrument": "${instrument}", "side": "${side}", "clOrderId": "${clOrdId}",
+                         "orderType": "${orderType}", "tif": "${tif}", "account": "${account}", "quantity": "${quantity}",
+                         "price": "${price}", "preExec": "${preExec}", "expireTime": "${expireTimeMs}" }, "ts": "${nowMs}" },
+      "cancelTemplate": { "op": "cancel_order", "arg": { "clOrderId": "${origClOrdId}", "instrument": "${instrument}" }, "ts": "${nowMs}" }
+    }
+  }
+}
