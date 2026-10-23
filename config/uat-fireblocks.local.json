@@ -1,0 +1,105 @@
+{
+  "_comment": "Cypator gcp-uat (GKE us-east5, svc uat/lcawsfireblocks, LB 34.162.61.109, IP allowlist via loadBalancerSourceRanges) - Fireblocks taker behind wsapi21 (server TCYPRWSAPIUAT11). Git-ignored. Load the credentials first: source config/uat-fireblocks.env.local.sh (or . .\\config\\uat-fireblocks.env.local.ps1).",
+  "environment": "gcp-uat",
+
+  "run": {
+    "maxOrders": 20,
+    "repeat": 1,
+    "delayBetweenOrdersMs": 500,
+    "orderTimeoutMs": 10000,
+    "sides": ["BUY", "SELL"],
+    "reportDir": "reports",
+    "clOrdIdPrefix": "OT",
+    "stopOnFailure": false,
+    "_priceMode_comment": "book = prices from the live UAT book at send time, so nothing is guessed; an instrument this taker cannot subscribe is simply not traded.",
+    "priceMode": "book",
+    "aggressiveBps": 20,
+    "passiveBps": 100,
+    "preExecBps": 0,
+    "preExecMaxDeviationBps": 500,
+    "sendPriceOnMarket": true
+  },
+
+  "_instruments_comment": "Fireblocks' UAT entitlements are not in the KB - adjust the symbols/sizes to what this taker can trade. Unknown symbols get 50202 on subscribe and their orders are not sent.",
+  "instruments": [
+    { "symbol": "BTC/USD", "sizes": [0.001, 0.005] },
+    { "symbol": "ETH/USD", "sizes": [0.01, 0.05] }
+  ],
+
+  "orderTypes": ["MARKET_IOC", "MARKET_FOK", "LIMIT_IOC", "LIMIT_FOK"],
+  "preExecOrderTypes": ["LIMIT_FOK"],
+  "orderVars": { "account": null, "baseChain": null, "termChain": null },
+  "expect": {
+    "LIMIT_FOK": ["FILLED"],
+    "MARKET_FOK": ["FILLED"],
+    "PREEXEC": ["FILLED"]
+  },
+
+  "ws": {
+    "server": "TCYPRWSAPIUAT11",
+    "signPath": "/verify",
+    "timestampUnit": "ms",
+    "logonTimeoutMs": 10000,
+    "pingIntervalMs": 20000,
+    "reconnect": true,
+    "logonTemplate": {
+      "op": "logon",
+      "arg": { "apiKey": "${apiKey}", "sign": "${sign}", "server": "${server}", "client": "${client}" },
+      "ts": "${timestamp}"
+    },
+    "pingTemplate": { "op": "ping" },
+
+    "market": {
+      "url": "wss://wsapi21.uat.cypator.net:12007/market",
+      "client": "FBUATMWS",
+      "apiKey": "${env:OT_FB_MD_API_KEY}",
+      "secret": "${env:OT_FB_MD_SECRET}",
+      "subscribeTemplate": {
+        "op": "subscribe",
+        "arg": {
+          "instrument": "${instrument}", "side": "BOTH", "subscriptionId": "${subscriptionId}", "quantity": 0,
+          "subscriptionRequestType": "snapshot", "typeBook": "SPOT", "aggBook": 0, "marketDepth": 0
+        },
+        "ts": "${nowMs}"
+      },
+      "unsubscribeTemplate": {
+        "op": "unsubscribe",
+        "arg": { "subscriptionId": "${subscriptionId}", "instrument": "${instrument}", "typeBook": "SPOT" },
+        "ts": "${nowMs}"
+      },
+      "waitForBookMs": 30000,
+      "requireBook": true,
+      "maxBookAgeMs": 0
+    },
+
+    "trade": {
+      "url": "wss://wsapi21.uat.cypator.net:12007/trade",
+      "client": "FBUATTWS",
+      "apiKey": "${env:OT_FB_TRADE_API_KEY}",
+      "secret": "${env:OT_FB_TRADE_SECRET}",
+      "orderTemplate": {
+        "op": "order",
+        "arg": {
+          "instrument": "${instrument}",
+          "side": "${side}",
+          "clOrderId": "${clOrdId}",
+          "orderType": "${orderType}",
+          "tif": "${tif}",
+          "account": "${account}",
+          "quantity": "${quantity}",
+          "price": "${price}",
+          "preExec": "${preExec}",
+          "baseChain": "${baseChain}",
+          "termChain": "${termChain}"
+        },
+        "ts": "${nowMs}"
+      },
+      "cancelTemplate": {
+        "op": "cancel_order",
+        "arg": { "clOrderId": "${origClOrdId}", "instrument": "${instrument}" },
+        "ts": "${nowMs}"
+      },
+      "cancelRestingOrders": true
+    }
+  }
+}

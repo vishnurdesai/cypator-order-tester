@@ -27,6 +27,179 @@ The JSON config holds the instruments, sizes, prices, order types, pre-exec scen
 > - `environment` is not in `run.nonProdEnvironments` (`uat`, `rippleuat`, `gcp-uat`, `dev`, `local`).
 > - The **market or trade URL** host matches `run.prodUrlPatterns`: `ripple.cypator.com` (Ripple prod) or anything with `prod` in it.
 
+## Quick start: Fireblocks on gcp-uat (PowerShell)
+
+> `config\uat-fireblocks.local.json` and `config\uat-fireblocks.env.local.*` are git-ignored. They exist only on the machine they were created on; elsewhere, create them as in the step-by-step guide below.
+
+Everything is already in that folder, so you can run it there yourself. Here are the steps in PowerShell.
+
+1. Go to the repo:
+
+```
+cd D:\Cypator-New\Deploy\cypator-order-tester
+```
+
+2. Build it. You only need to do this again after code changes. It runs the 78 tests and creates `target\cypator-order-tester.jar`:
+
+```
+mvn package
+```
+
+3. Load the Fireblocks credentials into the current window. The leading dot matters, and you need to repeat this in every new PowerShell window:
+
+```
+. .\config\uat-fireblocks.env.local.ps1
+```
+
+4. Check the connection and prices without sending any orders:
+
+```
+java -jar target\cypator-order-tester.jar --config config\uat-fireblocks.local.json --check
+```
+
+5. Send the orders. Start with a single one:
+
+```
+java -jar target\cypator-order-tester.jar --config config\uat-fireblocks.local.json --types LIMIT_FOK --instruments BTC/USD --sides BUY --pre-exec none --max-orders 1
+```
+
+Then the full set (20 orders, including pre-exec):
+
+```
+java -jar target\cypator-order-tester.jar --config config\uat-fireblocks.local.json
+```
+
+## Step by step: running against an environment
+
+Each step below gives the command for **Command Prompt** (`cmd`, prompt `D:\...>`), **PowerShell** (prompt `PS D:\...>`) and **Git Bash**. They differ only in how credentials are loaded (step 5) and in the slash direction.
+
+### 1. What you need first
+
+- **Tools:** JDK 17 and Maven 3.6 or later on the PATH. Check with `java -version` and `mvn -v`.
+- **Per session:** the **market** and **trade** session details. For each one you need the URL, client id, API key and secret, plus the server identifier. The server identifier is usually shared, and the API key and secret may be too.
+- **Network access:** your machine's **public IP must be on the endpoint's allowlist**. For GKE endpoints that is the `loadBalancerSourceRanges` of the LCA service; change it in Helm values, not with `kubectl patch`, or ArgoCD reverts it.
+- **A dedicated test taker if possible.** Each client gets one market and one trade connection, so connecting drops anyone already logged on with the same client ids.
+
+### 2. Open a terminal in the repo and build
+
+```bash
+cd D:\Cypator-New\Deploy\cypator-order-tester
+```
+
+```bash
+mvn package
+```
+
+This runs the tests and produces `target/cypator-order-tester.jar`. Rebuild only after code changes.
+
+### 3. Create your environment config (once per environment)
+
+Copy the sample to a git-ignored local file:
+
+```bash
+copy config\rippleuat.sample.json config\myenv.local.json
+```
+
+(PowerShell: `Copy-Item`; Git Bash: `cp config/rippleuat.sample.json config/myenv.local.json`.)
+
+Then edit `config/myenv.local.json`:
+- **`environment`:** for example `uat`, `rippleuat` or `gcp-uat`. Anything else counts as production and needs `--allow-prod`.
+- **Sessions:** set `ws.market.url` (`wss://<host>:12007/market`) and `ws.trade.url` (`wss://<host>:12007/trade`), plus `ws.market.client`, `ws.trade.client` and `ws.server`. Each can also come from `${env:...}`.
+- **Separate keys per session:** if each session has its own API key and secret, add `"apiKey": "${env:MY_MD_API_KEY}"` and `"secret": "${env:MY_MD_SECRET}"` inside `ws.market`, and the same with trade variables inside `ws.trade`. The shared `ws.apiKey`/`ws.secret` are then not used.
+- **`instruments`:** the symbols and sizes to test. `"priceMode": "book"` prices from the live book, so you don't have to guess prices. An instrument the taker can't subscribe to is reported and never traded.
+- **Other knobs:** `orderTypes`, `preExecOrderTypes`, `run.maxOrders` and `expect` (see the [config reference](#config-reference)).
+- **Slow books:** on a freshly restarted LCA, the books can take a while to fill. Set `ws.market.waitForBookMs` to `30000` there.
+
+### 4. Create your credentials file (once per environment)
+
+Copy the template that matches your terminal. The copy is git-ignored because of `*.local.*`, so secrets never get committed. Then replace the `<...>` placeholders.
+
+| Terminal | Copy | Edit |
+|----------|------|------|
+| Command Prompt | `copy config\credentials.sample.cmd config\myenv.env.local.cmd` | `config\myenv.env.local.cmd` |
+| PowerShell | `Copy-Item config\credentials.sample.ps1 config\myenv.env.local.ps1` | `config\myenv.env.local.ps1` |
+| Git Bash | `cp config/credentials.sample.sh config/myenv.env.local.sh` | `config/myenv.env.local.sh` |
+
+The variable names must match the `${env:...}` names used in your config.
+
+### 5. Load the credentials into the terminal window
+
+You need to do this again in every new window; the variables only live in that window.
+
+| Terminal | Command |
+|----------|---------|
+| Command Prompt | `call config\myenv.env.local.cmd` |
+| PowerShell | `. .\config\myenv.env.local.ps1`  (the leading dot matters) |
+| Git Bash | `source config/myenv.env.local.sh` |
+
+`. .\...` fails in Command Prompt with *"'.' is not recognized"*. Use `call` there, or type `powershell` first.
+
+### 6. Dry run: check what would be sent (no connection)
+
+```bash
+java -jar target\cypator-order-tester.jar --config config\myenv.local.json --dry-run
+```
+
+The dry run prints the sessions, the subscriptions and the exact JSON of every order.
+- **Missing credentials:** a `WARNING: a real run would stop here` line means a credential is missing (step 5).
+- **Order cap:** `capped at maxOrders ... never sent: [...]` lists what the cap leaves out. Raise it with `--max-orders N` (`0` means no cap).
+
+### 7. Check: connect and log on, send no orders
+
+```bash
+java -jar target\cypator-order-tester.jar --config config\myenv.local.json --check
+```
+
+The check logs on to the market session, then the trade session, subscribes every instrument and prints the books. **It sends no orders.** Success looks like this:
+
+```
+[market] logged on
+[trade] logged on
+  BTC/USD: bid 83319.73 x 0.0982 | ask 83369.06 x 0.0074  (6/6 levels, ...)
+CHECK OK: both sessions logged on, every instrument has a book
+```
+
+If it fails, see [Troubleshooting](#troubleshooting-a-first-connection) below.
+
+### 8. Send one real order
+
+```bash
+java -jar target\cypator-order-tester.jar --config config\myenv.local.json --types LIMIT_FOK --instruments BTC/USD --sides BUY --pre-exec none --max-orders 1
+```
+
+Use a symbol from your config. The order line should end in `-> FILLED PASS`.
+
+### 9. Run the full set
+
+```bash
+java -jar target\cypator-order-tester.jar --config config\myenv.local.json
+```
+
+To narrow a run:
+- `--types`, `--instruments`, `--sides` and `--max-orders` pick a subset.
+- `--pre-exec none|only` leaves out pre-exec orders, or sends only them.
+
+### 10. Read the results
+
+- **Console:** one line per order, then the results table and the totals (`N orders, N pass, N fail`).
+- **CSV:** `reports\run-<runId>-<environment>.csv` has one row per order, including the book at send time and every raw message.
+- **Exit code:** `0` all passed, `1` some failed, `2` config or prod-guard error.
+- **Server side:** every ClOrdID starts `OT-WS-<runId>-`. Grep it, or the order id, in the LCA log (`/LCA/logs/app-Prod-prod.ProdPlatform.LCANode-<date>.log` in the `lcaws*` pod) to see the order's lifecycle.
+
+### Troubleshooting a first connection
+
+These are the errors we hit when connecting to gcp-uat for the first time.
+
+| Symptom | Likely cause | What to do |
+|---------|--------------|------------|
+| `connect failed: ... HTTP connect timed out` | Your IP is not on the endpoint's allowlist (the packets are dropped) | Check with `Test-NetConnection <host> -Port 12007`. Add your public IP (`/32`) to the LCA service's `loadBalancerSourceRanges`. |
+| `Unexpected HTTP response status code 503` | The LCA pod is (re)starting; envoy is up but the app is not | Wait until the pod is Ready and its load-balancer endpoint is attached, then retry. |
+| `logon failed: code 50103: Invalid credentials` | Wrong key/secret/client id, **or** the LCA started with an empty session table (it raced data-agent at startup) | Look for `Error retrieving session info` in the LCA log. If it is there, restart the LCA once data-agent is healthy (see the devops-skills note `ws-acceptor-empty-session-table`). |
+| `no market data snapshot received` | No liquidity for that taker and instrument, or the books are still warming up after a restart | Rerun `--check` with `waitForBookMs` 30000. If it is still empty, that instrument has no liquidity in this environment, so leave it out. |
+| Pre-exec order `TIMEOUT` after an ACK | The pre-exec maker could not take the order (in gcp-uat, maker 142 `lpgwsmakersim` fails for ETH/USD with `instrument is null`). The failure never reaches the taker. | Check the maker pod's log for `COULD_NOT_SEND_TO_LP`. Leave that instrument out of pre-exec with `"preExecOrderTypes": []`. |
+| `... uses an unset environment variable` | Credentials were not loaded in this window | Repeat step 5. |
+
+
 ## Build
 
 You need JDK 17 and Maven 3.6 or later.
@@ -64,23 +237,6 @@ The exit code is `0` when every order passed and `1` when any order failed. It i
 - a usage or config error, including unset `${env:}` credentials, bad URLs, an unknown `expect` key, or a missing template field;
 - the selection contains no orders;
 - the prod guard blocks the run.
-
-## Setup
-
-1. Copy the sample config: `cp config/rippleuat.sample.json config/rippleuat.local.json`. `*.local.json` is git-ignored.
-2. Export the credentials. The config reads them with `${env:NAME}`:
-   ```bash
-   export OT_WS_SERVER=...          # server identifier, e.g. TRIPPLEWSAPIUAT1 (the wsapiN number does not map to it)
-   export OT_WS_API_KEY=...         # login
-   export OT_WS_SECRET=...          # password / passphrase - only used to compute the HMAC signature
-   export OT_WS_MARKET_CLIENT=...   # client id of the MARKET session (e.g. RIPPLEMC2-style)
-   export OT_WS_TRADE_CLIENT=...    # client id of the TRADE session  (e.g. RIPPLETC2-style)
-   ```
-   Each session can override `apiKey`, `secret` or `server` if its credentials differ.
-3. Point `ws.market.url` and `ws.trade.url` at the `wsapiN` host your taker uses: `…:12007/market` and `…:12007/trade`. Your public IP must be whitelisted on that NLB.
-4. Run `--dry-run`, then `--check` (sessions + books, no orders), then one order (`--max-orders 1`), then the full set.
-
-Use a **dedicated test taker**. The API allows only one market and one trade connection per client, so a new connection drops the previous one.
 
 ## Pricing
 
